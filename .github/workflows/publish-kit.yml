@@ -1,0 +1,78 @@
+name: Publish kit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - github-clone/**
+      - .github/workflows/publish-kit.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # Lets the job mint the OIDC token that `--sign` exchanges for a
+  # short-lived Fulcio certificate. Keyless signing fails without it.
+  id-token: write
+
+concurrency:
+  group: publish-kit
+  cancel-in-progress: false
+
+env:
+  KIT_DIR: github-clone
+  KIT_REF: docker.io/cdupuis/sbx-kits:github-clone
+  # Nightly, not `latest`: this kit's `args:` block is only understood by
+  # builds off main. The newest stable (v0.38.0) has no --sign flag at all,
+  # and v0.39.0-rc3 rejects the spec. Switch to `latest` once a release
+  # ships kit args. Only the rolling `nightly` tag carries Linux artifacts —
+  # the dated nightly-<ts>-<sha> releases are macOS-only.
+  SBX_VERSION: nightly
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install sbx
+        run: |
+          set -euo pipefail
+          if [ "$SBX_VERSION" = latest ]; then
+            url="https://github.com/docker/sbx-releases/releases/latest/download/DockerSandboxes-linux-amd64.tar.gz"
+          else
+            url="https://github.com/docker/sbx-releases/releases/download/${SBX_VERSION}/DockerSandboxes-linux-amd64.tar.gz"
+          fi
+          mkdir -p "$RUNNER_TEMP/sbx"
+          # The tarball also carries the microVM kernel, rootfs and containerd
+          # shims. Publishing a kit is a plain registry operation, so unpack
+          # only the CLI and skip the bundled install.sh (it provisions the
+          # sandbox runtime and wants e2fsprogs on the host).
+          curl -fsSL "$url" | tar -xz -C "$RUNNER_TEMP/sbx" --strip-components=1 docker-sbx/sbx
+          echo "$RUNNER_TEMP/sbx" >> "$GITHUB_PATH"
+
+      - name: Show sbx version
+        run: sbx version
+
+      - name: Validate kit
+        # Catches spec errors before the registry is touched. `validate`
+        # resolves kit args first, so the required `repo` arg has to be
+        # supplied even though nothing is cloned here — any value matching
+        # the arg's pattern will do.
+        run: sbx kit validate "$KIT_DIR" --kit-arg repo=docker/sbx-kits-contrib
+
+      - name: Log in to Docker Hub
+        # sbx reads the Docker credential store, so a plain docker login is
+        # all the authentication `sbx kit push` needs.
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push and sign kit
+        run: sbx kit push "$KIT_DIR" "$KIT_REF" --sign
+
+      - name: Verify signature
+        run: |
+          sbx kit verify "$KIT_REF" \
+            --certificate-identity-regexp "^https://github.com/${{ github.repository }}/" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
