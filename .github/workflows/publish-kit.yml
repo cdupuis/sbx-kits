@@ -61,12 +61,23 @@ jobs:
         run: sbx kit validate "$KIT_DIR" --kit-arg repo=docker/sbx-kits-contrib
 
       - name: Log in to Docker Hub
-        # sbx reads the Docker credential store, so a plain docker login is
-        # all the authentication `sbx kit push` needs.
+        # Authenticates the upload itself: `sbx kit push` reads the Docker
+        # credential store.
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Sign in to Docker Hub with sbx
+        # Authenticates the signature steps. Attaching and reading OCI
+        # referrers on docker.io resolves credentials from the sbx session
+        # rather than the Docker credential store, so the login above does
+        # not cover `--sign` or `kit verify`: they fail with "user is not
+        # authenticated to Docker" after the push has already succeeded.
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: printf '%s' "$DOCKERHUB_TOKEN" | sbx login --username "$DOCKERHUB_USERNAME" --password-stdin
 
       - name: Push and sign kit
         run: sbx kit push "$KIT_DIR" "$KIT_REF" --sign
