@@ -58,7 +58,7 @@ jobs:
         # resolves kit args first, so the required `repo` arg has to be
         # supplied even though nothing is cloned here — any value matching
         # the arg's pattern will do.
-        run: sbx kit validate "$KIT_DIR" --kit-arg repo=docker/sbx-kits-contrib
+        run: sbx kit validate "$KIT_DIR" --kit-arg repo=owner/name
 
       - name: Log in to Docker Hub
         # Authenticates the upload itself: `sbx kit push` reads the Docker

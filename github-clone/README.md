@@ -6,14 +6,20 @@ using the [`gh` CLI](https://cli.github.com/) with a **proxy-managed
 `GH_TOKEN` sentinel** so private repos and authenticated writes work
 without ever handing the real token to the container.
 
+The recommended way to run this kit is the repo-root
+[`github-clone.env.yaml`](../github-clone.env.yaml) environment file, which
+clones into `/home/agent/workspace` with no host workspace bind. See the
+[root README](../README.md) for that flow. The rest of this page is the
+kit-only `sbx run --kit` interface.
+
 ## Usage
 
 Public repo — no host-side setup required:
 
 ```console
 $ sbx run \
-    --kit "git+https://github.com/docker/sbx-kits-contrib.git#dir=github-clone" \
-    --arg repo=docker/sbx-kits-contrib \
+    --kit "git+https://github.com/cdupuis/sbx-kits.git#dir=github-clone" \
+    --arg repo=cdupuis/sbx-kits \
     claude
 ```
 
@@ -26,7 +32,8 @@ $ echo "$GITHUB_TOKEN" | sbx secret set -g github
 
 then run the same `sbx run …` command. The sandbox proxy substitutes the
 real token onto every outbound request to `api.github.com` and `github.com`;
-`gh` and `git` only ever see the literal string `proxy-managed`.
+`gh` and `git` only ever see a synthetic sentinel — for GitHub that is
+`GH_TOKEN=gho_sbxproxymanaged000000000000000000000`, never the real token.
 
 ### Arguments
 
@@ -39,18 +46,18 @@ real token onto every outbound request to `api.github.com` and `github.com`;
 Examples:
 
 ```console
-# Clone a specific tag into /workspace/src instead of /project
+# Clone a specific ref into /workspace/src instead of /project
 $ sbx run \
-    --kit "git+https://github.com/docker/sbx-kits-contrib.git#dir=github-clone" \
-    --arg repo=docker/sbx-kits-contrib \
-    --arg ref=v0.2.0 \
+    --kit "git+https://github.com/cdupuis/sbx-kits.git#dir=github-clone" \
+    --arg repo=cdupuis/sbx-kits \
+    --arg ref=main \
     --arg dir=/workspace/src \
     claude
 
 # Clone a full HTTPS URL — same result as the shorthand above
 $ sbx run \
-    --kit "git+https://github.com/docker/sbx-kits-contrib.git#dir=github-clone" \
-    --arg repo=https://github.com/docker/sbx-kits-contrib.git \
+    --kit "git+https://github.com/cdupuis/sbx-kits.git#dir=github-clone" \
+    --arg repo=https://github.com/cdupuis/sbx-kits.git \
     claude
 ```
 
@@ -68,11 +75,17 @@ $ sbx run \
   `gh`, so the apt-get network cost is paid only when needed. On
   non-Debian bases the mixin fails with an actionable error pointing at
   layering a companion install mixin instead.
-- **Auth**: `credentials: - service: github` with `apiKey.name: GH_TOKEN`
-  and `proxyManaged: true`. The in-container `GH_TOKEN` value is the
-  literal `proxy-managed` sentinel; the sandbox proxy swaps in the real
-  token on outbound requests. This is the same convention the built-in
-  `claude-acp` / `codex-acp` kits document.
+- **Auth**: `credentials: - service: github` with `apiKey.name: GH_TOKEN`,
+  `proxyManaged: true`, and `inject` entries for `api.github.com` (the
+  `gh` REST path) and `github.com` (the git HTTPS transport). The
+  in-container `GH_TOKEN` is a synthetic sentinel
+  (`gho_sbxproxymanaged000000000000000000000`); the sandbox proxy swaps in
+  the real token on outbound requests. This is the same convention the
+  built-in `claude-acp` / `codex-acp` kits document.
+
+  The host side must allow both domains too — a binding is intersected
+  with what the kit requests, so a host list of only `api.github.com`
+  silently drops the `github.com` injection.
 - **Re-run safety**: if `dir` already exists and is non-empty (e.g. on
   `sbx create` retries), the clone is skipped rather than failing or
   clobbering.
@@ -94,7 +107,7 @@ $ sbx run \
 ## SSH clones
 
 Pass `repo=git@github.com:owner/name.git` and layer the
-[`github-ssh/`](../github-ssh) mixin so GitHub's host keys are
+[`github-ssh`](https://github.com/docker/sbx-kits-contrib/tree/main/github-ssh) mixin so GitHub's host keys are
 pre-populated and the host's `ssh-agent` is forwarded. In that mode the
 `GH_TOKEN` sentinel is unused for the clone itself, though `gh api`
 inside the sandbox still routes through the proxy.
@@ -102,6 +115,6 @@ inside the sandbox still routes through the proxy.
 ## References
 
 - [Kit spec](spec.yaml)
-- [v2 spec grammar](../spec/SPEC-v2.md) — `args:` (§2.1), `credentials:` (§5.4), `setup:` (§5.6)
-- [`skills/kit-author/topics/bindings.md`](../skills/kit-author/topics/bindings.md) — how the `github` credential binding is discovered on the host
-- [`github-ssh/`](../github-ssh) — companion mixin for SSH-based clones
+- [v2 spec grammar](https://github.com/docker/sbx-kits-contrib/blob/main/spec/SPEC-v2.md) — `args:` (§2.1), `credentials:` (§5.4), `setup:` (§5.6)
+- [Kit-author bindings guide](https://github.com/docker/sbx-kits-contrib/blob/main/skills/kit-author/topics/bindings.md) — how the `github` credential binding is discovered on the host
+- [`github-ssh`](https://github.com/docker/sbx-kits-contrib/tree/main/github-ssh) — companion mixin for SSH-based clones

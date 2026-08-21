@@ -38,7 +38,7 @@ permissions:
     # The complete outbound contract for this mixin. Two groups:
     #
     # 1. `gh` runtime traffic (clone + gh api + credential-helper auth).
-    #    Every credential-inject domain above is also listed here — the
+    #    Every credential-inject domain below is also listed here — the
     #    engine requires it (spec/SPEC-v2.md §5.2, "All-egress-declared").
     #
     # 2. `apt-get` install path when `gh` is missing from the base image.
@@ -60,6 +60,33 @@ permissions:
       - security.ubuntu.com       # Ubuntu security updates (amd64)
       - ports.ubuntu.com          # Ubuntu archive/security (arm64)
       - download.docker.com       # Docker's apt repo, pre-added by *-docker bases
+
+# The credential this mixin needs, and where the proxy may spend it. The
+# host side (`~/.config/sbx/credentials.yaml`, or `sbx secret set github`)
+# declares *where* the token lives — kits never declare discovery. See
+# SPEC-v2.md §5.4.
+#
+# `proxyManaged: true` keeps the real token out of the container: GH_TOKEN
+# in-container is a synthetic sentinel and the proxy substitutes the real
+# value on the way out.
+#
+# Both inject domains also appear in `permissions.network.allow` above —
+# the spec requires it (§5.4.1). api.github.com covers `gh api` and the
+# `gh repo clone` metadata lookup; github.com covers the git HTTPS
+# transport, so `git push` / `git pull` from inside the sandbox work too.
+credentials:
+  - service: github
+    description: Token used to clone the repository and for later gh/git operations.
+    apiKey:
+      name: GH_TOKEN
+      proxyManaged: true
+      inject:
+        - domain: api.github.com
+          header: Authorization
+          format: Bearer %s
+        - domain: github.com
+          header: Authorization
+          format: Bearer %s
 
 setup:
   install:
