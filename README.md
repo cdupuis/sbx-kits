@@ -27,6 +27,15 @@ sbx env run github-clone.env.yaml \
   --env-arg agent=codex
 ```
 
+Start on an open PR instead of the default branch:
+
+```bash
+sbx env run github-clone.env.yaml \
+  --env-arg owner=cdupuis \
+  --env-arg repo=frontend \
+  --env-arg pr=42
+```
+
 Tear it down (sandbox + scoped secrets):
 
 ```bash
@@ -43,13 +52,14 @@ sbx env rm github-clone.env.yaml \
 |-----|----------|---------|---------|
 | `owner` | yes | — | GitHub owner; sandbox name `owner-repo` |
 | `repo` | yes | — | GitHub repo name (not `owner/name`) |
+| `pr` | no | none | PR number to check out after the clone (kit `pr` arg) |
 | `agent` | no | `claude` | Built-in agent (`claude`, `codex`, `gemini`, …) |
 
 `owner` and `repo` are letters, digits, dots, and hyphens only — that keeps the derived sandbox name valid (`^[a-zA-Z0-9][A-Za-z0-9.-]+$`).
 
 What the file sets up:
 
-- **Kit** — `./github-clone` from this checkout (a git source is commented in the file for published use), with `repo=owner/repo` and `dir=/home/agent/workspace`
+- **Kit** — `./github-clone` from this checkout (a git source is commented in the file for published use), with `repo=owner/repo`, `dir=/home/agent/workspace`, and `pr` passed straight through
 - **Env** — `OWNER`, `REPO`, and `REPO_SLUG` (`owner/repo`) inside the sandbox
 - **Secret** — `github`, resolved by `gh auth token` on the host
 - **Binding** — that credential may be used for `api.github.com` (the `gh` REST path) and `github.com` (the git HTTPS transport)
@@ -84,7 +94,8 @@ sbx run --kit docker.io/cdupuis/sbx-kits:github-clone --arg repo=cdupuis/fronten
 | Arg | Required | Default | Notes |
 |-----|----------|---------|-------|
 | `repo` | yes | — | `owner/name`, or a full `https://github.com/…` / `git@github.com:…` URL |
-| `ref` | no | default branch | Branch, tag, or commit SHA |
+| `ref` | no | default branch | Branch, tag, or commit SHA — mutually exclusive with `pr` |
+| `pr` | no | none | Pull request number to check out — mutually exclusive with `ref` |
 | `dir` | no | `/project` | Absolute path inside the sandbox |
 
 Pin a ref or a different clone path:
@@ -98,6 +109,18 @@ sbx run \
   claude
 ```
 
+Start the agent on an open PR instead:
+
+```bash
+sbx run \
+  --kit ./github-clone \
+  --arg repo=cdupuis/frontend \
+  --arg pr=42 \
+  claude
+```
+
+`pr` runs `gh pr checkout` after the clone, so the PR is on a local branch and `git push` updates it. That clone keeps full history (a shallow one has no merge base against the target branch), which is what makes `git diff <base>...HEAD` work.
+
 For private repos without the env file:
 
 ```bash
@@ -109,7 +132,7 @@ echo "$GITHUB_TOKEN" | sbx secret set -g github
 Two `setup.install` hooks run once as root, before the agent starts ([`github-clone/spec.yaml`](github-clone/spec.yaml)):
 
 1. **Install `gh` / `git`** if the base image does not already have them (Debian/Ubuntu via apt).
-2. **Clone** with `gh repo clone`, `chown` the tree to `agent`, and point git’s `github.com` credential helper at `gh auth git-credential`.
+2. **Clone** with `gh repo clone`, point git’s `github.com` credential helper at `gh auth git-credential`, check out `pr` if one was passed, and `chown` the tree to `agent`.
 
 If `dir` already exists and is non-empty, the clone is skipped so retries do not clobber work.
 

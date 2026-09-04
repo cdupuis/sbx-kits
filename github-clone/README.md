@@ -40,7 +40,8 @@ real token onto every outbound request to `api.github.com` and `github.com`;
 | Arg    | Required | Default    | Notes |
 |--------|----------|------------|-------|
 | `repo` | yes      | —          | `owner/name` shorthand, or a full `https://github.com/…` or `git@github.com:…` URL. |
-| `ref`  | no       | *(default branch)* | Branch, tag, or 7–40 hex commit SHA to check out. |
+| `ref`  | no       | *(default branch)* | Branch, tag, or 7–40 hex commit SHA to check out. Mutually exclusive with `pr`. |
+| `pr`   | no       | *(none)*   | Pull request number to check out with `gh pr checkout`. Mutually exclusive with `ref`. |
 | `dir`  | no       | `/project` | Absolute path inside the sandbox to clone into. |
 
 Examples:
@@ -52,6 +53,13 @@ $ sbx run \
     --arg repo=cdupuis/sbx-kits \
     --arg ref=main \
     --arg dir=/workspace/src \
+    claude
+
+# Land the agent on PR #42, ready to review or push follow-up commits
+$ sbx run \
+    --kit "git+https://github.com/cdupuis/sbx-kits.git#dir=github-clone" \
+    --arg repo=cdupuis/sbx-kits \
+    --arg pr=42 \
     claude
 
 # Clone a full HTTPS URL — same result as the shorthand above
@@ -92,6 +100,17 @@ $ sbx run \
 - **`ref` handling**: branches and tags use `--depth 1 --branch`; if that
   fails (commit SHAs aren't valid `--branch` args) it falls back to a full
   clone + `git checkout`.
+- **`pr` handling**: clones the full history — not `--depth 1` — then runs
+  `gh pr checkout <number>` from inside the clone. Full history is what makes
+  `git diff <base>...HEAD` and `git log <base>..HEAD` work; a shallow clone
+  leaves the PR head with no merge base against the target branch. The PR
+  lands on a local branch, so `git push` updates it, and PRs from forks work
+  because `gh` points the branch at the contributor's fork. Only a PR number
+  is accepted: a PR URL could name a different repository than `repo`, which
+  would leave the clone and the checked-out branch unrelated. Passing both
+  `ref` and `pr` fails at create time rather than letting one silently win.
+  No extra network access is needed — `gh` reaches the PR over
+  `api.github.com` and fetches over `github.com`, both already allowed.
 - **Network contract**: two groups, both listed in
   `permissions.network.allow`:
   - **Runtime** (`gh` + `git`): `api.github.com`, `github.com`,

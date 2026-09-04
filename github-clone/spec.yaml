@@ -23,8 +23,19 @@ args:
     default: ""
     description: |
       Optional git ref (branch, tag, or 7–40 hex commit SHA) to check out.
-      Empty (the default) clones the repo's default branch.
+      Empty (the default) clones the repo's default branch. Mutually
+      exclusive with `pr`.
     pattern: '^[A-Za-z0-9._/-]*$'
+  pr:
+    default: ""
+    description: |
+      Optional pull request number to check out with `gh pr checkout` after
+      the clone. The PR lands on a local branch, so `git push` from the
+      sandbox updates it. Empty (the default) leaves the working copy on
+      `ref` or the repo's default branch. Mutually exclusive with `ref`.
+    # Number only. A PR URL would let the value name a different repository
+    # than `repo`, leaving the clone and the checked-out branch unrelated.
+    pattern: '^[0-9]*$'
   dir:
     default: "/project"
     description: |
@@ -157,7 +168,15 @@ setup:
 
         REPO='${{ kit.args.repo }}'
         REF='${{ kit.args.ref }}'
+        PR='${{ kit.args.pr }}'
         DIR='${{ kit.args.dir }}'
+
+        # Both args pick the checked-out commit, so honouring both would mean
+        # silently letting one win. Fail at create time instead.
+        if [ -n "$REF" ] && [ -n "$PR" ]; then
+          echo "github-clone: 'ref' and 'pr' are mutually exclusive — pass one or the other." >&2
+          exit 1
+        fi
 
         # Idempotent re-run: if the target already has content, leave it
         # alone rather than fail or clobber user changes.
@@ -177,7 +196,14 @@ setup:
         # gh reads GH_TOKEN itself, so no extra plumbing is needed for
         # the clone. Extra flags after `--` are passed straight to
         # `git clone`.
-        if [ -n "$REF" ]; then
+        if [ -n "$PR" ]; then
+          # Full history on purpose. `gh pr checkout` fetches the PR head
+          # into the clone, and in a --depth 1 repo that head shares no
+          # ancestor with the base branch, so `git diff base...HEAD` and
+          # `git log base..HEAD` — the first things anyone reviewing a PR
+          # reaches for — fail with "no merge base".
+          gh repo clone "$REPO" "$DIR"
+        elif [ -n "$REF" ]; then
           # Fast path: shallow-clone a branch or tag directly. Fallback:
           # if REF is a commit SHA (not a branch/tag), --branch fails, so
           # do a full clone and check the SHA out.
@@ -190,8 +216,6 @@ setup:
           gh repo clone "$REPO" "$DIR" -- --depth 1
         fi
 
-        chown -R agent:agent "$DIR"
-
         # Route git HTTPS auth for github.com through gh's credential
         # helper so any later `git push` / `git pull` from within the
         # sandbox picks up the same proxy-managed GH_TOKEN sentinel.
@@ -201,9 +225,22 @@ setup:
         # even when no GitHub credential is bound on the host (the empty
         # first helper resets whatever the base image may have set; the
         # two-line pattern is what gh's own setup-git writes).
+        #
+        # Ordered before the PR checkout below so the fetch it runs already
+        # has the helper available.
         git config --system --unset-all credential."https://github.com".helper 2>/dev/null || true
         git config --system --add       credential."https://github.com".helper ''
         git config --system --add       credential."https://github.com".helper '!gh auth git-credential'
+
+        if [ -n "$PR" ]; then
+          # Run from inside the clone so gh resolves the repo from origin —
+          # no --repo, which would have to re-parse $REPO's URL forms. gh
+          # looks the PR up over api.github.com, fetches its head, and
+          # leaves a local branch behind, including for PRs from forks.
+          ( cd "$DIR" && gh pr checkout "$PR" )
+        fi
+
+        chown -R agent:agent "$DIR"
       user: "0"
       description: Clone ${{ kit.args.repo }} into ${{ kit.args.dir }} via gh
 
@@ -217,6 +254,12 @@ agentInstructions:
     A GitHub repository (`${{ kit.args.repo }}`) has been cloned into
     `${{ kit.args.dir }}` at sandbox-create time. Treat that directory as
     the working copy for this task rather than `~/workspace`.
+
+    The kit's `pr` arg is `${{ kit.args.pr }}` — empty when no pull request
+    was requested. When it holds a number, that PR is already checked out on
+    a local branch via `gh pr checkout` and the clone has full history, so
+    `git diff <base>...HEAD` shows the PR's changes and `git push` updates
+    the PR itself.
 
     Authentication is proxy-mediated: `GH_TOKEN` in the container is a
     sentinel — the sandbox proxy swaps in the real token bound on the host
