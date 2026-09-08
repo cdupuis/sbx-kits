@@ -71,12 +71,12 @@ $ sbx run \
 
 ## How it works
 
-- **When**: two `setup.install` hooks run once, as `root`, before the agent
-  launches. The first ensures `gh` (and `git`) are installed; the second
-  runs `gh repo clone`, `chown`s the resulting tree to the `agent` user,
-  and writes a `--system` git credential-helper entry pointing at
-  `gh auth git-credential` (so any later `git push` / `git pull` from the
-  sandbox picks up the same proxy-managed `GH_TOKEN` sentinel).
+- **When**: three `setup.install` hooks run once before the agent launches.
+  As `root`, the first ensures `gh` (and `git`) are installed; the second
+  creates the destination, assigns it to `agent`, and writes a `--system`
+  git credential-helper entry pointing at `gh auth git-credential`. The
+  third runs the clone and any checkout as uid 1000, avoiding Git's dubious
+  ownership check and making the working tree agent-owned from the outset.
 - **Auto-install**: if `gh` is missing from the base image, the mixin adds
   GitHub's official apt source (`cli.github.com`) and
   `apt-get install`s it. Skipped entirely on bases that already carry
