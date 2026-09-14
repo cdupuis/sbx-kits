@@ -129,10 +129,11 @@ echo "$GITHUB_TOKEN" | sbx secret set -g github
 
 ## How the kit works
 
-Two `setup.install` hooks run once as root, before the agent starts ([`github-clone/spec.yaml`](github-clone/spec.yaml)):
+Three `setup.install` hooks run once before the agent starts ([`github-clone/spec.yaml`](github-clone/spec.yaml)):
 
-1. **Install `gh` / `git`** if the base image does not already have them (Debian/Ubuntu via apt).
-2. **Clone** with `gh repo clone`, point git’s `github.com` credential helper at `gh auth git-credential`, check out `pr` if one was passed, and `chown` the tree to `agent`.
+1. As root, **install `gh` / `git`** if the base image does not already have them (Debian/Ubuntu via apt).
+2. As root, **prepare the destination** for uid 1000 and point Git's system-wide `github.com` credential helper at `gh auth git-credential`.
+3. As uid 1000, **clone** with `gh repo clone` and check out `pr` if one was passed. Running Git as the working tree's owner avoids its dubious-ownership check.
 
 If `dir` already exists and is non-empty, the clone is skipped so retries do not clobber work.
 

@@ -157,8 +157,10 @@ setup:
       user: "0"
       description: Install gh (and git) via apt if the base image doesn't already ship them
 
-    # Second hook: do the actual clone. Split from the install so `sbx
-    # create` reports each step separately.
+    # Second hook: prepare the clone destination and system-wide Git auth as
+    # root. The clone itself runs as the agent in the next hook; creating and
+    # handing off the destination here lets that work even for paths such as
+    # /project whose parent is not writable by uid 1000.
     #
     # The value of `${{ kit.args.* }}` is substituted textually into this
     # string before the spec is decoded; the args' `pattern:` constraints
@@ -166,7 +168,6 @@ setup:
     - command: |
         set -euo pipefail
 
-        REPO='${{ kit.args.repo }}'
         REF='${{ kit.args.ref }}'
         PR='${{ kit.args.pr }}'
         DIR='${{ kit.args.dir }}'
@@ -178,21 +179,40 @@ setup:
           exit 1
         fi
 
-        # Idempotent re-run: if the target already has content, leave it
-        # alone rather than fail or clobber user changes.
+        # Route git HTTPS auth for github.com through gh's credential helper
+        # for both the clone below and later agent-run git operations.
+        git config --system --unset-all credential."https://github.com".helper 2>/dev/null || true
+        git config --system --add       credential."https://github.com".helper ''
+        git config --system --add       credential."https://github.com".helper '!gh auth git-credential'
+
+        # Idempotent re-run: don't change ownership of an existing working
+        # tree. The agent hook below performs the same check and skips it.
+        if [ -d "$DIR" ] && [ -n "$(ls -A "$DIR" 2>/dev/null || true)" ]; then
+          exit 0
+        fi
+
+        mkdir -p "$DIR"
+        chown agent:agent "$DIR"
+      user: "0"
+      description: Prepare ${{ kit.args.dir }} for an agent-owned clone
+
+    # Third hook: clone as the same uid that runs the agent. Besides making
+    # the resulting tree agent-owned from the outset, this avoids Git's
+    # dubious-ownership check when the destination already belongs to uid
+    # 1000 (as /home/agent/workspace does in the standard images).
+    - command: |
+        set -euo pipefail
+
+        REPO='${{ kit.args.repo }}'
+        REF='${{ kit.args.ref }}'
+        PR='${{ kit.args.pr }}'
+        DIR='${{ kit.args.dir }}'
+
         if [ -d "$DIR" ] && [ -n "$(ls -A "$DIR" 2>/dev/null || true)" ]; then
           echo "github-clone: '$DIR' already exists and is non-empty; skipping clone." >&2
           exit 0
         fi
 
-        mkdir -p "$(dirname "$DIR")"
-
-        # The whole clone runs as root — the agent user (uid 1000) can't
-        # create a top-level directory like /project because / is
-        # root-owned 755. `chown -R agent:agent` at the end hands the
-        # resulting tree over. This matches the pattern every other kit
-        # in this repo uses (e.g. github-ssh, claude-sbx-statusline).
-        #
         # gh reads GH_TOKEN itself, so no extra plumbing is needed for
         # the clone. Extra flags after `--` are passed straight to
         # `git clone`.
@@ -208,29 +228,15 @@ setup:
           # if REF is a commit SHA (not a branch/tag), --branch fails, so
           # do a full clone and check the SHA out.
           if ! gh repo clone "$REPO" "$DIR" -- --depth 1 --branch "$REF" 2>/dev/null; then
-            rm -rf "$DIR"
+            # Keep the root-created destination itself: uid 1000 may not be
+            # able to recreate it beneath a root-owned parent such as `/`.
+            find "$DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
             gh repo clone "$REPO" "$DIR"
             git -C "$DIR" checkout "$REF"
           fi
         else
           gh repo clone "$REPO" "$DIR" -- --depth 1
         fi
-
-        # Route git HTTPS auth for github.com through gh's credential
-        # helper so any later `git push` / `git pull` from within the
-        # sandbox picks up the same proxy-managed GH_TOKEN sentinel.
-        # Written to /etc/gitconfig with `--system` so any user in the
-        # container inherits it — equivalent to running `gh auth
-        # setup-git` per-user, but keeps this hook root-scoped and works
-        # even when no GitHub credential is bound on the host (the empty
-        # first helper resets whatever the base image may have set; the
-        # two-line pattern is what gh's own setup-git writes).
-        #
-        # Ordered before the PR checkout below so the fetch it runs already
-        # has the helper available.
-        git config --system --unset-all credential."https://github.com".helper 2>/dev/null || true
-        git config --system --add       credential."https://github.com".helper ''
-        git config --system --add       credential."https://github.com".helper '!gh auth git-credential'
 
         if [ -n "$PR" ]; then
           # Run from inside the clone so gh resolves the repo from origin —
@@ -240,8 +246,7 @@ setup:
           ( cd "$DIR" && gh pr checkout "$PR" )
         fi
 
-        chown -R agent:agent "$DIR"
-      user: "0"
+      user: "1000"
       description: Clone ${{ kit.args.repo }} into ${{ kit.args.dir }} via gh
 
 agentInstructions:
