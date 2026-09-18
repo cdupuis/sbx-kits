@@ -97,7 +97,8 @@ credentials:
           format: Bearer %s
         - domain: github.com
           header: Authorization
-          format: Bearer %s
+          username: x-access-token
+          format: "%s"
 
 setup:
   install:
