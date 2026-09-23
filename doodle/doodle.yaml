@@ -1,0 +1,40 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+displayName: Docker Doodle
+description: Runs docker/doodle — the terminal Moby viewer built with OpenTUI and Bun — as the sandbox's interactive process.
+sourceUrl: https://github.com/cdupuis/sbx-kits
+
+kind: workload
+
+# One value drives the base image, the provide and the published tag.
+version: "${{ kit.args.tag }}"
+
+args:
+  tag:
+    default: "2026"
+    description: docker/doodle image tag to run.
+    # Version-shaped (SPEC-v3 §5.2) on purpose: this value is also
+    # `version:` and the provide's version, and a moving tag such as
+    # `latest` is neither version-shaped nor a pin.
+    pattern: '^[0-9]+(\.[0-9A-Za-z-]+)*$'
+    buildArg: DOODLE_TAG
+
+# The image tag is the content's only version — the app itself reports
+# none — so the provide names the tag the rootfs was built from.
+provides: ["doodle@${{ kit.args.tag }}"]
+
+capabilities:
+  # This workload is an agent sandbox: the host launches the entrypoint as
+  # the agent rather than as PID 1. That is what gives the viewer the TTY
+  # it refuses to start without.
+  - type: com.docker.sandbox/sbx@1
+
+  # The workload owns the context-file profile; composed mixins fan their
+  # guidance out beside it.
+  - type: com.docker.sandbox/agent-context@1
+    config:
+      filename: AGENTS.md
+      contentFile: ./doodle-context.md
+
+# No network-policy: the viewer renders a model shipped in the image and
+# reaches nothing. Declaring no egress leaves it at the host's deny-all.
